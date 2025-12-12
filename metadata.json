@@ -1,0 +1,5 @@
+{
+  "name": "Branch Locator",
+  "description": "Smart branch finder that calculates the nearest store and distance based on customer address.",
+  "requestFramePermissions": []
+}
