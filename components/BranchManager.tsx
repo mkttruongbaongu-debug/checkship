@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect, useMemo } from 'react';
+import React, { useState, useRef, useEffect, useMemo, memo } from 'react';
 import { Branch, HolidaySchedule, SearchLog } from '../types';
 import { normalizeString, normalizePhoneNumber } from '../services/geminiService';
 import { sheetAPI } from '../services/sheetService';
@@ -34,31 +34,36 @@ const calculateStats = (history: HolidaySchedule[]) => {
   return stats;
 };
 
-// Component TimePicker ổn định hơn, tránh re-render giật cục
-const TimePicker24h = ({ value, onChange, disabled }: { value: string, onChange: (val: string) => void, disabled?: boolean }) => {
+// --- ISOLATED TIMEPICKER (Prevent Re-render loops) ---
+const TimePicker24h = memo(({ value, onChange, disabled }: { value: string, onChange: (val: string) => void, disabled?: boolean }) => {
+  // Tách biệt hoàn toàn state hiển thị và value prop
   const [hStr, setHStr] = useState('00');
   const [mStr, setMStr] = useState('00');
 
+  // Chỉ sync khi value từ cha thay đổi thật sự (load form mới)
   useEffect(() => {
     if (value) {
       const [h, m] = value.split(':');
-      if (h !== hStr || m !== mStr) {
-         setHStr(h || '00');
-         setMStr(m || '00');
-      }
+      setHStr(prev => (prev !== h ? (h || '00') : prev));
+      setMStr(prev => (prev !== m ? (m || '00') : prev));
     }
   }, [value]);
+
+  const updateParent = (h: string, m: string) => {
+    onChange(`${h}:${m}`);
+  };
 
   const handleHourChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let val = e.target.value;
     if (val.length > 2) val = val.slice(0, 2);
     if (!/^\d*$/.test(val)) return;
-    setHStr(val);
+    
+    setHStr(val); // Cập nhật UI ngay lập tức
     
     const num = parseInt(val);
     if (!isNaN(num)) {
-       let safeH = num > 23 ? '23' : val;
-       onChange(`${safeH}:${mStr}`);
+       let safeH = num > 23 ? '23' : val; // Không pad số 0 ngay để user gõ tiếp
+       updateParent(safeH, mStr);
     }
   };
 
@@ -67,19 +72,20 @@ const TimePicker24h = ({ value, onChange, disabled }: { value: string, onChange:
     if (isNaN(num)) num = 0; if (num > 23) num = 23;
     const finalH = num.toString().padStart(2, '0');
     setHStr(finalH);
-    onChange(`${finalH}:${mStr}`);
+    updateParent(finalH, mStr);
   };
 
   const handleMinuteChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     let val = e.target.value;
     if (val.length > 2) val = val.slice(0, 2);
     if (!/^\d*$/.test(val)) return;
+    
     setMStr(val);
-
+    
     const num = parseInt(val);
     if (!isNaN(num)) {
        let safeM = num > 59 ? '59' : val;
-       onChange(`${hStr}:${safeM}`);
+       updateParent(hStr, safeM);
     }
   };
 
@@ -88,7 +94,7 @@ const TimePicker24h = ({ value, onChange, disabled }: { value: string, onChange:
     if (isNaN(num)) num = 0; if (num > 59) num = 59;
     const finalM = num.toString().padStart(2, '0');
     setMStr(finalM);
-    onChange(`${hStr}:${finalM}`);
+    updateParent(hStr, finalM);
   };
 
   return (
@@ -98,7 +104,198 @@ const TimePicker24h = ({ value, onChange, disabled }: { value: string, onChange:
        <input type="text" inputMode="numeric" value={mStr} onChange={handleMinuteChange} onBlur={handleMinuteBlur} disabled={disabled} className="w-8 text-center text-base font-bold outline-none bg-transparent p-0" placeholder="MM" />
     </div>
   );
-};
+});
+
+// --- ISOLATED FORM COMPONENT (Ngăn chặn việc bị unmount khi parent re-render) ---
+const BranchFormSection = memo(({ 
+  editingId, formData, setFormData, holidayUI, setHolidayUI, 
+  handleSave, handleCancelEdit, handleToggleHoliday, currentEditingBranch 
+}: any) => {
+  const editingStats = currentEditingBranch && currentEditingBranch.holidayHistory 
+    ? calculateStats(currentEditingBranch.holidayHistory) 
+    : {};
+
+  return (
+    <div className="h-full flex flex-col bg-white">
+       {/* 1. SCROLLABLE CONTENT */}
+       <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-5">
+          <div className={`relative transition-colors duration-300 ${editingId ? 'bg-amber-50 rounded-xl p-2' : ''}`}>
+              <h3 className={`text-lg font-bold mb-4 border-b pb-2 flex items-center gap-2 ${editingId ? 'text-[#D4AF37]' : 'text-[#8B1E1E]'}`}>
+                {editingId ? <span>✏️ Cập Nhật Chi Nhánh</span> : <span>➕ Thêm Chi Nhánh Mới</span>}
+              </h3>
+              
+              <form id="branchForm" onSubmit={handleSave} className="space-y-4" autoComplete="off">
+                <div className="flex items-center justify-between bg-gray-50 p-3 rounded border border-gray-200">
+                  <span className="text-sm font-bold text-gray-700 uppercase">Trạng thái</span>
+                  <div className="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+                    <input type="checkbox" name="toggle" id="toggle" checked={formData.isActive} onChange={e => setFormData({...formData, isActive: e.target.checked})} className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer border-gray-300 checked:right-0 checked:border-[#8B1E1E]"/>
+                    <label htmlFor="toggle" className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer ${formData.isActive ? 'bg-[#8B1E1E]' : 'bg-gray-300'}`}></label>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tên Chi Nhánh <span className="text-red-500">*</span></label>
+                  <input type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-[#8B1E1E]/20 outline-none text-base bg-white" required placeholder="VD: CN Đống Đa" />
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Quản Lý</label>
+                    <input type="text" value={formData.manager} onChange={e => setFormData({...formData, manager: e.target.value})} className="w-full p-3 border rounded-lg outline-none text-base bg-white" placeholder="Tên QL"/>
+                  </div>
+                  <div>
+                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">SĐT</label>
+                    <input type="tel" value={formData.phoneNumber} onChange={e => setFormData({...formData, phoneNumber: e.target.value})} className="w-full p-3 border rounded-lg outline-none text-base bg-white" placeholder="09xxxx"/>
+                  </div>
+                </div>
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Địa Chỉ <span className="text-red-500">*</span></label>
+                  <textarea rows={3} value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} className="w-full p-3 border rounded-lg resize-none focus:ring-2 focus:ring-[#8B1E1E]/20 outline-none text-base bg-white" required placeholder="Số nhà, đường, phường, quận..." />
+                </div>
+
+                <div className={`border rounded-lg p-3 ${holidayUI.isEnabled ? 'bg-red-50 border-red-200' : 'bg-white border-dashed border-gray-300'}`}>
+                  <div className="flex items-center justify-between mb-2">
+                    <label className="text-xs font-bold text-[#8B1E1E] uppercase flex items-center gap-1">
+                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                      Bếp nghỉ
+                    </label>
+                    <input type="checkbox" checked={holidayUI.isEnabled} onChange={handleToggleHoliday} className="w-6 h-6 accent-[#8B1E1E]" />
+                  </div>
+                  {holidayUI.isEnabled && (
+                    <div className="space-y-3 text-sm animate-fade-in">
+                      <div className="flex flex-col gap-1">
+                          <span className="text-xs font-bold text-gray-500">Bắt đầu:</span> 
+                          <div className="flex gap-2">
+                            <input type="date" value={holidayUI.startDate} onChange={e => setHolidayUI({...holidayUI, startDate: e.target.value})} className="border p-2 rounded flex-1 bg-white"/> 
+                            <TimePicker24h value={holidayUI.startTime} onChange={v => setHolidayUI({...holidayUI, startTime: v})}/>
+                          </div>
+                      </div>
+                      <div className="flex flex-col gap-1">
+                          <span className="text-xs font-bold text-gray-500">Kết thúc:</span>
+                          <div className="flex gap-2">
+                            <input type="date" value={holidayUI.endDate} onChange={e => setHolidayUI({...holidayUI, endDate: e.target.value})} className="border p-2 rounded flex-1 bg-white"/> 
+                            <TimePicker24h value={holidayUI.endTime} onChange={v => setHolidayUI({...holidayUI, endTime: v})}/>
+                          </div>
+                      </div>
+                      <input type="text" value={holidayUI.reason} onChange={e => setHolidayUI({...holidayUI, reason: e.target.value})} placeholder="Lý do nghỉ..." className="w-full border p-2 rounded bg-white"/>
+                    </div>
+                  )}
+                </div>
+
+                {editingId && (
+                  <div className="mt-4 pt-4 border-t border-gray-200">
+                    <label className="text-xs font-bold text-gray-500 uppercase mb-2 flex justify-between items-center">
+                      <span>Thống kê lịch sử nghỉ:</span>
+                      <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-[10px]">
+                        {currentEditingBranch?.holidayHistory?.length || 0} lần
+                      </span>
+                    </label>
+                    {Object.keys(editingStats).length > 0 ? (
+                      <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-1">
+                        {Object.entries(editingStats).sort((a,b) => Number(b[0]) - Number(a[0])).map(([year, stat]: any) => (
+                          <div key={year} className="bg-white rounded border border-gray-200 p-2 text-xs">
+                              <div className="flex justify-between font-bold text-[#8B1E1E] mb-1">
+                                <span>Năm {year}</span>
+                                <span>Tổng: {stat.total} lần</span>
+                              </div>
+                              <div className="flex flex-wrap gap-1">
+                                {Object.entries(stat.months).map(([m, c]) => (
+                                    <span key={m} className="bg-gray-50 border px-1.5 rounded text-gray-600 font-medium">
+                                      T{m}: <span className="text-black">{c as any}</span>
+                                    </span>
+                                ))}
+                              </div>
+                          </div>
+                        ))}
+                      </div>
+                    ) : (
+                      <p className="text-xs text-gray-400 italic text-center py-2 border border-dashed rounded bg-gray-50">Chưa có dữ liệu lịch sử</p>
+                    )}
+                  </div>
+                )}
+                <div>
+                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ghi chú (Nội bộ)</label>
+                  <input type="text" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} className="w-full p-2 border bg-yellow-50 rounded text-sm" placeholder="Ghi chú admin..." />
+                </div>
+              </form>
+          </div>
+       </div>
+
+       {/* 2. FIXED FOOTER FOR BUTTONS: Nằm trên thanh điều hướng Mobile */}
+       <div className="border-t border-gray-200 p-4 bg-white shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-20 pb-20 md:pb-4">
+          <div className="flex gap-3">
+             <button type="submit" form="branchForm" className={`flex-1 text-white font-bold py-3.5 rounded-lg shadow-md transition-transform active:scale-95 text-sm uppercase flex items-center justify-center gap-2 ${editingId ? 'bg-[#D4AF37]' : 'bg-[#8B1E1E]'}`}>
+                 {editingId ? <span>💾 Lưu Thay Đổi</span> : <span>➕ Thêm Mới</span>}
+             </button>
+             {editingId && <button type="button" onClick={handleCancelEdit} className="px-5 bg-gray-200 font-bold rounded-lg hover:bg-gray-300 text-sm">Hủy</button>}
+          </div>
+       </div>
+    </div>
+  );
+});
+
+const LogsView = memo(({ logs, loading }: { logs: SearchLog[], loading: boolean }) => {
+  return (
+    <div className="flex-1 overflow-hidden flex flex-col h-full bg-gray-50">
+        <div className="p-3 md:p-4 border-b border-gray-200 bg-white flex justify-between items-center shadow-sm z-10">
+            <h3 className="font-bold text-[#8B1E1E] flex items-center gap-2">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2" /></svg>
+                Nhật Ký Tìm Kiếm
+            </h3>
+            <span className="text-xs text-gray-500 bg-gray-100 px-2 py-1 rounded-full font-medium">
+               {logs.length} bản ghi
+            </span>
+        </div>
+
+        <div className="flex-1 overflow-auto custom-scrollbar p-3 md:p-4">
+          {loading ? (
+             <div className="flex flex-col items-center justify-center py-12 text-gray-400 gap-3">
+                 <svg className="animate-spin h-8 w-8 text-[#8B1E1E]" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                    <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
+                    <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+                 </svg>
+                 <p className="text-sm font-medium">Đang tải dữ liệu...</p>
+             </div>
+          ) : logs.length === 0 ? (
+             <div className="flex flex-col items-center justify-center py-12 text-gray-400 gap-2 opacity-60">
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-12 w-12" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+                <p className="text-sm">Chưa có nhật ký nào</p>
+             </div>
+          ) : (
+             <div className="space-y-2">
+                {logs.map((log) => (
+                    <div key={log.id} className="bg-white p-3 rounded-lg border border-gray-100 shadow-sm hover:shadow-md transition-shadow">
+                        <div className="flex justify-between items-start mb-1">
+                           <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded uppercase border ${log.isSuccess ? 'bg-green-50 text-green-600 border-green-100' : 'bg-red-50 text-red-600 border-red-100'}`}>
+                             {log.isSuccess ? 'Thành công' : 'Thất bại'}
+                           </span>
+                           <span className="text-[10px] text-gray-400 font-mono">
+                             {new Date(log.timestamp).toLocaleString('vi-VN')}
+                           </span>
+                        </div>
+                        <p className="font-bold text-gray-800 text-sm mb-1">"{log.query}"</p>
+                        {log.resultBranch && (
+                            <div className="text-xs text-gray-600 flex items-center gap-1 mt-1 bg-gray-50 p-1.5 rounded">
+                                <span className="text-gray-400">➜</span>
+                                <span className="font-medium text-[#8B1E1E]">{log.resultBranch}</span>
+                            </div>
+                        )}
+                        <div className="flex justify-between items-center mt-2 pt-2 border-t border-gray-50">
+                             <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded border ${
+                                log.source === 'INSTANT' ? 'bg-blue-50 text-blue-600 border-blue-100' : 
+                                log.source === 'AI' ? 'bg-purple-50 text-purple-600 border-purple-100' : 'bg-gray-100 text-gray-500'
+                             }`}>
+                                {log.source}
+                             </span>
+                             {log.userAgent && <span className="text-[9px] text-gray-400 truncate max-w-[120px]" title={log.userAgent}>{log.userAgent}</span>}
+                        </div>
+                    </div>
+                ))}
+             </div>
+          )}
+        </div>
+    </div>
+  );
+});
 
 export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranches, onReload }) => {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -118,7 +315,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
   const [isUrlVisible, setIsUrlVisible] = useState(false);
   const [isCheckingUrl, setIsCheckingUrl] = useState(false);
   
-  // Return to 1s interval as requested
+  // Timer để update status badge, nhưng không ảnh hưởng Form nhờ memo
   const [now, setNow] = useState(new Date());
 
   const [toast, setToast] = useState<{msg: string, type: 'success' | 'error' | 'loading'} | null>(null);
@@ -133,7 +330,6 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
   });
 
   const [searchTerm, setSearchTerm] = useState('');
-  const formRef = useRef<HTMLDivElement>(null);
 
   const [logs, setLogs] = useState<SearchLog[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
@@ -141,7 +337,6 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
   useEffect(() => { setScriptUrl(sheetAPI.getCurrentUrl()); }, []);
 
   useEffect(() => {
-    // 1 giây update 1 lần để báo giờ Realtime
     const timer = setInterval(() => setNow(new Date()), 1000);
     return () => clearInterval(timer);
   }, []);
@@ -220,9 +415,6 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
   }, [activeTab, isAuthenticated]);
 
   const currentEditingBranch = branches.find(b => b.id === editingId);
-  const editingStats = currentEditingBranch && currentEditingBranch.holidayHistory 
-    ? calculateStats(currentEditingBranch.holidayHistory) 
-    : {};
 
   const handleToggleHoliday = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
@@ -418,23 +610,17 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
       });
   };
 
-  // FIX: Memoize list để KHÔNG bị sort lại mỗi giây gây giật layout
-  // Chỉ sort lại khi branches thay đổi hoặc user gõ tìm kiếm
   const filteredBranches = useMemo(() => {
     return branches.filter(b => {
       const s = searchTerm.toLowerCase();
       return (b.name||"").toLowerCase().includes(s) || (b.address||"").toLowerCase().includes(s) || (b.manager||"").toLowerCase().includes(s);
     }).sort((a, b) => {
-       // Sort đơn giản để tránh nhảy vị trí liên tục
-       // Ưu tiên trạng thái: Có lịch nghỉ -> Bình thường
        const hasScheduleA = a.holidaySchedule?.isEnabled ? 1 : 0;
        const hasScheduleB = b.holidaySchedule?.isEnabled ? 1 : 0;
-       
        if (hasScheduleA !== hasScheduleB) return hasScheduleB - hasScheduleA;
        return (a.name || "").localeCompare(b.name || "");
     });
   }, [branches, searchTerm]); 
-  // Dependency array không có 'now' -> Không sort lại mỗi giây
 
   if (!isAuthenticated) {
     return (
@@ -462,204 +648,6 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
       </div>
     );
   }
-
-  // --- COMPONENT: FORM NHẬP LIỆU (Reused) ---
-  const BranchForm = () => (
-    <div className="h-full flex flex-col bg-white">
-       {/* 1. SCROLLABLE CONTENT: Cuộn thoải mái, không lo bị che nút */}
-       <div className="flex-1 overflow-y-auto custom-scrollbar p-4 md:p-5">
-          <div className={`relative transition-colors duration-300 ${editingId ? 'bg-amber-50 rounded-xl p-2' : ''}`}>
-              <h3 className={`text-lg font-bold mb-4 border-b pb-2 flex items-center gap-2 ${editingId ? 'text-[#D4AF37]' : 'text-[#8B1E1E]'}`}>
-                {editingId ? <span>✏️ Cập Nhật Chi Nhánh</span> : <span>➕ Thêm Chi Nhánh Mới</span>}
-              </h3>
-              
-              <form id="branchForm" onSubmit={handleSave} className="space-y-4" autoComplete="off">
-                <div className="flex items-center justify-between bg-gray-50 p-3 rounded border border-gray-200">
-                  <span className="text-sm font-bold text-gray-700 uppercase">Trạng thái</span>
-                  <div className="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
-                    <input type="checkbox" name="toggle" id="toggle" checked={formData.isActive} onChange={e => setFormData({...formData, isActive: e.target.checked})} className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer border-gray-300 checked:right-0 checked:border-[#8B1E1E]"/>
-                    <label htmlFor="toggle" className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer ${formData.isActive ? 'bg-[#8B1E1E]' : 'bg-gray-300'}`}></label>
-                  </div>
-                </div>
-
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tên Chi Nhánh <span className="text-red-500">*</span></label>
-                  <input type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-[#8B1E1E]/20 outline-none text-base bg-white" required placeholder="VD: CN Đống Đa" />
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Quản Lý</label>
-                    <input type="text" value={formData.manager} onChange={e => setFormData({...formData, manager: e.target.value})} className="w-full p-3 border rounded-lg outline-none text-base bg-white" placeholder="Tên QL"/>
-                  </div>
-                  <div>
-                    <label className="block text-xs font-bold text-gray-500 uppercase mb-1">SĐT</label>
-                    <input type="tel" value={formData.phoneNumber} onChange={e => setFormData({...formData, phoneNumber: e.target.value})} className="w-full p-3 border rounded-lg outline-none text-base bg-white" placeholder="09xxxx"/>
-                  </div>
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Địa Chỉ <span className="text-red-500">*</span></label>
-                  <textarea rows={3} value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} className="w-full p-3 border rounded-lg resize-none focus:ring-2 focus:ring-[#8B1E1E]/20 outline-none text-base bg-white" required placeholder="Số nhà, đường, phường, quận..." />
-                </div>
-
-                <div className={`border rounded-lg p-3 ${holidayUI.isEnabled ? 'bg-red-50 border-red-200' : 'bg-white border-dashed border-gray-300'}`}>
-                  <div className="flex items-center justify-between mb-2">
-                    <label className="text-xs font-bold text-[#8B1E1E] uppercase flex items-center gap-1">
-                      <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                      Bếp nghỉ
-                    </label>
-                    <input type="checkbox" checked={holidayUI.isEnabled} onChange={handleToggleHoliday} className="w-6 h-6 accent-[#8B1E1E]" />
-                  </div>
-                  {holidayUI.isEnabled && (
-                    <div className="space-y-3 text-sm animate-fade-in">
-                      <div className="flex flex-col gap-1">
-                          <span className="text-xs font-bold text-gray-500">Bắt đầu:</span> 
-                          <div className="flex gap-2">
-                            <input type="date" value={holidayUI.startDate} onChange={e => setHolidayUI({...holidayUI, startDate: e.target.value})} className="border p-2 rounded flex-1 bg-white"/> 
-                            <TimePicker24h value={holidayUI.startTime} onChange={v => setHolidayUI({...holidayUI, startTime: v})}/>
-                          </div>
-                      </div>
-                      <div className="flex flex-col gap-1">
-                          <span className="text-xs font-bold text-gray-500">Kết thúc:</span>
-                          <div className="flex gap-2">
-                            <input type="date" value={holidayUI.endDate} onChange={e => setHolidayUI({...holidayUI, endDate: e.target.value})} className="border p-2 rounded flex-1 bg-white"/> 
-                            <TimePicker24h value={holidayUI.endTime} onChange={v => setHolidayUI({...holidayUI, endTime: v})}/>
-                          </div>
-                      </div>
-                      <input type="text" value={holidayUI.reason} onChange={e => setHolidayUI({...holidayUI, reason: e.target.value})} placeholder="Lý do nghỉ..." className="w-full border p-2 rounded bg-white"/>
-                    </div>
-                  )}
-                </div>
-
-                {editingId && (
-                  <div className="mt-4 pt-4 border-t border-gray-200">
-                    <label className="text-xs font-bold text-gray-500 uppercase mb-2 flex justify-between items-center">
-                      <span>Thống kê lịch sử nghỉ:</span>
-                      <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-[10px]">
-                        {currentEditingBranch?.holidayHistory?.length || 0} lần
-                      </span>
-                    </label>
-                    {Object.keys(editingStats).length > 0 ? (
-                      <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-1">
-                        {Object.entries(editingStats).sort((a,b) => Number(b[0]) - Number(a[0])).map(([year, stat]: any) => (
-                          <div key={year} className="bg-white rounded border border-gray-200 p-2 text-xs">
-                              <div className="flex justify-between font-bold text-[#8B1E1E] mb-1">
-                                <span>Năm {year}</span>
-                                <span>Tổng: {stat.total} lần</span>
-                              </div>
-                              <div className="flex flex-wrap gap-1">
-                                {Object.entries(stat.months).map(([m, c]) => (
-                                    <span key={m} className="bg-gray-50 border px-1.5 rounded text-gray-600 font-medium">
-                                      T{m}: <span className="text-black">{c as any}</span>
-                                    </span>
-                                ))}
-                              </div>
-                          </div>
-                        ))}
-                      </div>
-                    ) : (
-                      <p className="text-xs text-gray-400 italic text-center py-2 border border-dashed rounded bg-gray-50">Chưa có dữ liệu lịch sử</p>
-                    )}
-                  </div>
-                )}
-                <div>
-                  <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ghi chú (Nội bộ)</label>
-                  <input type="text" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} className="w-full p-2 border bg-yellow-50 rounded text-sm" placeholder="Ghi chú admin..." />
-                </div>
-              </form>
-          </div>
-       </div>
-
-       {/* 2. FIXED FOOTER FOR BUTTONS: Luôn hiển thị ở dưới cùng, nằm trên Bottom Nav */}
-       <div className="border-t border-gray-200 p-4 bg-white shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-20 pb-20 md:pb-4">
-          <div className="flex gap-3">
-             <button type="submit" form="branchForm" className={`flex-1 text-white font-bold py-3.5 rounded-lg shadow-md transition-transform active:scale-95 text-sm uppercase flex items-center justify-center gap-2 ${editingId ? 'bg-[#D4AF37]' : 'bg-[#8B1E1E]'}`}>
-                 {editingId ? <span>💾 Lưu Thay Đổi</span> : <span>➕ Thêm Mới</span>}
-             </button>
-             {editingId && <button type="button" onClick={handleCancelEdit} className="px-5 bg-gray-200 font-bold rounded-lg hover:bg-gray-300 text-sm">Hủy</button>}
-          </div>
-       </div>
-    </div>
-  );
-
-  // --- LOGS COMPONENT ---
-  const LogsView = () => (
-    <div className="w-full h-full bg-gray-50 flex flex-col pb-16 md:pb-0">
-      <div className="p-4 md:p-6 bg-white border-b flex justify-between items-end flex-shrink-0">
-        <div>
-            <h3 className="text-xl font-bold text-[#8B1E1E] mb-1">Lịch Sử Tra Cứu</h3>
-            <p className="text-sm text-gray-500">Nhật ký hoạt động của hệ thống.</p>
-        </div>
-        {loadingLogs && <div className="text-xs text-gray-400 italic animate-pulse">Đang tải...</div>}
-      </div>
-
-      <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-3 flex-shrink-0">
-          <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
-            <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Tổng Log</p>
-            <p className="text-xl md:text-2xl font-bold text-gray-800">{logs.length}</p>
-          </div>
-          <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
-            <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Thành công</p>
-            <p className="text-xl md:text-2xl font-bold text-green-600">{logs.filter(l => l.isSuccess).length}</p>
-          </div>
-          <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
-            <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Thất bại</p>
-            <p className="text-xl md:text-2xl font-bold text-red-600">{logs.filter(l => !l.isSuccess).length}</p>
-          </div>
-          <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
-            <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Tỉ lệ AI</p>
-            <p className="text-xl md:text-2xl font-bold text-blue-600">
-              {logs.length ? Math.round((logs.filter(l => l.source === 'AI').length / logs.length) * 100) : 0}%
-            </p>
-          </div>
-      </div>
-      
-      <div className="flex-1 overflow-auto px-4 pb-4">
-          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden min-w-[600px] md:min-w-0">
-            <table className="w-full text-sm text-left border-collapse">
-                <thead className="bg-gray-100 text-gray-600 font-bold uppercase text-xs sticky top-0 shadow-sm">
-                  <tr>
-                      <th className="px-4 py-3 w-[150px]">Thời Gian</th>
-                      <th className="px-4 py-3">Nội dung</th>
-                      <th className="px-4 py-3">Kết quả</th>
-                      <th className="px-4 py-3 text-center w-[100px]">Nguồn</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-gray-100">
-                  {logs.map(log => (
-                      <tr key={log.id} className="hover:bg-gray-50">
-                        <td className="px-4 py-3 text-gray-500 text-xs">
-                            {new Date(log.timestamp).toLocaleString('vi-VN')}
-                        </td>
-                        <td className="px-4 py-3 font-medium text-gray-800">
-                            {log.query}
-                        </td>
-                        <td className="px-4 py-3">
-                            {log.isSuccess ? (
-                              <span className="text-green-700 font-bold flex items-center gap-1">
-                                ✓ {log.resultBranch}
-                              </span>
-                            ) : (
-                              <span className="text-red-500 text-xs">{log.resultBranch || 'Lỗi không xác định'}</span>
-                            )}
-                        </td>
-                        <td className="px-4 py-3 text-center">
-                            <span className={`text-[10px] font-bold px-2 py-1 rounded border ${log.source === 'AI' ? 'bg-blue-50 text-blue-600 border-blue-200' : log.source === 'FAIL' ? 'bg-red-50 text-red-600 border-red-200' : 'bg-green-50 text-green-600 border-green-200'}`}>
-                              {log.source}
-                            </span>
-                        </td>
-                      </tr>
-                  ))}
-                  {logs.length === 0 && (
-                      <tr>
-                        <td colSpan={4} className="text-center py-8 text-gray-400 italic">Chưa có lịch sử tìm kiếm nào được ghi nhận.</td>
-                      </tr>
-                  )}
-                </tbody>
-            </table>
-          </div>
-      </div>
-    </div>
-  );
 
   // --- MAIN RENDER ---
   return (
@@ -735,7 +723,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
       <div className="flex-1 overflow-hidden bg-gray-100 relative flex flex-col md:flex-row">
         
         {/* VIEW: LOGS */}
-        {activeTab === 'logs' && <LogsView />}
+        {activeTab === 'logs' && <LogsView logs={logs} loading={loadingLogs} />}
 
         {/* VIEW: BRANCHES & FORM (Split on Desktop, Tabbed on Mobile) */}
         {activeTab !== 'logs' && (
@@ -745,14 +733,23 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
                     - Desktop: Always show (Split view)
                 */}
                 <div 
-                  ref={formRef}
                   className={`
                      bg-white border-r border-gray-200 shadow-xl z-20 flex flex-col
                      md:w-1/3 lg:w-1/4 md:relative md:order-1 
                      ${activeTab === 'form' ? 'absolute inset-0 z-40' : 'hidden md:flex'}
                   `}
                 >
-                   <BranchForm />
+                   <BranchFormSection 
+                      editingId={editingId}
+                      formData={formData}
+                      setFormData={setFormData}
+                      holidayUI={holidayUI}
+                      setHolidayUI={setHolidayUI}
+                      handleSave={handleSave}
+                      handleCancelEdit={handleCancelEdit}
+                      handleToggleHoliday={handleToggleHoliday}
+                      currentEditingBranch={currentEditingBranch}
+                   />
                 </div>
 
                 {/* LIST COLUMN:
