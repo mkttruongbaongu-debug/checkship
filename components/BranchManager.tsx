@@ -17,26 +17,20 @@ const getTodayString = () => {
   return (new Date(now.getTime() - offset)).toISOString().split('T')[0];
 };
 
-// Hàm tính toán thống kê (Sử dụng dữ liệu đã clean từ App.tsx)
 const calculateStats = (history: HolidaySchedule[]) => {
   const stats: Record<string, { total: number; months: Record<number, number> }> = {};
-  
   if (!Array.isArray(history) || history.length === 0) return stats;
   
   history.forEach(item => {
     if (!item.startTime) return;
     const date = new Date(item.startTime);
     if (isNaN(date.getTime())) return;
-    
     const year = date.getFullYear().toString();
     const month = date.getMonth() + 1; 
-    
     if (!stats[year]) stats[year] = { total: 0, months: {} };
-    
     stats[year].total += 1;
     stats[year].months[month] = (stats[year].months[month] || 0) + 1;
   });
-  
   return stats;
 };
 
@@ -83,6 +77,11 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
   const [loginPassword, setLoginPassword] = useState('');
 
   const [activeTab, setActiveTab] = useState<'branches' | 'logs'>('branches');
+  
+  // --- STATE UI CONTROL ---
+  // isMobileFormOpen: Kiểm soát việc hiển thị form Full màn hình trên mobile
+  const [isMobileFormOpen, setIsMobileFormOpen] = useState(false);
+  
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showConfig, setShowConfig] = useState(false);
   const [scriptUrl, setScriptUrl] = useState('');
@@ -194,43 +193,61 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
     }
   };
 
-  const handleEdit = (e: React.MouseEvent, branch: Branch) => {
-    e.stopPropagation();
-    setEditingId(branch.id);
-    const isTempId = branch.id.startsWith('gen-') || branch.id.startsWith('init-');
-    
-    setFormData({
-      id: isTempId ? `(Chưa có ID - ${branch.id})` : branch.id,
-      name: branch.name || '', manager: branch.manager || '', address: branch.address || '',
-      phoneNumber: normalizePhoneNumber(branch.phoneNumber),
-      isActive: branch.isActive !== undefined ? branch.isActive : true, note: branch.note || ''
-    });
-    
-    // --- LOGIC QUAN TRỌNG: CHECK EXPIRED ĐỂ AUTO-UNTICK ---
-    if (branch.holidaySchedule?.isEnabled) {
-      const startObj = new Date(branch.holidaySchedule.startTime);
-      const endObj = new Date(branch.holidaySchedule.endTime);
-      const now = new Date();
-      
-      // Nếu thời gian kết thúc < hiện tại -> Đã hết hạn -> Bỏ tick (isEnabled = false)
-      const isExpired = endObj < now;
+  // --- ACTIONS ---
 
-      // Xử lý múi giờ để hiển thị đúng trên input type="date"
-      const startOffset = startObj.getTimezoneOffset() * 60000;
-      const endOffset = endObj.getTimezoneOffset() * 60000;
-      const startIso = (new Date(startObj.getTime() - startOffset)).toISOString();
-      const endIso = (new Date(endObj.getTime() - endOffset)).toISOString();
-
-      setHolidayUI({
-        isEnabled: !isExpired, // Nếu hết hạn thì tick = false
-        startDate: startIso.split('T')[0], startTime: startIso.split('T')[1].slice(0, 5),
-        endDate: endIso.split('T')[0], endTime: endIso.split('T')[1].slice(0, 5), reason: branch.holidaySchedule.reason || ''
+  const openForm = (branch?: Branch) => {
+    if (branch) {
+      // Edit Mode
+      setEditingId(branch.id);
+      const isTempId = branch.id.startsWith('gen-') || branch.id.startsWith('init-');
+      setFormData({
+        id: isTempId ? `(Chưa có ID - ${branch.id})` : branch.id,
+        name: branch.name || '', manager: branch.manager || '', address: branch.address || '',
+        phoneNumber: normalizePhoneNumber(branch.phoneNumber),
+        isActive: branch.isActive !== undefined ? branch.isActive : true, note: branch.note || ''
       });
+
+      if (branch.holidaySchedule?.isEnabled) {
+        const startObj = new Date(branch.holidaySchedule.startTime);
+        const endObj = new Date(branch.holidaySchedule.endTime);
+        const now = new Date();
+        const isExpired = endObj < now;
+
+        const startOffset = startObj.getTimezoneOffset() * 60000;
+        const endOffset = endObj.getTimezoneOffset() * 60000;
+        const startIso = (new Date(startObj.getTime() - startOffset)).toISOString();
+        const endIso = (new Date(endObj.getTime() - endOffset)).toISOString();
+
+        setHolidayUI({
+          isEnabled: !isExpired,
+          startDate: startIso.split('T')[0], startTime: startIso.split('T')[1].slice(0, 5),
+          endDate: endIso.split('T')[0], endTime: endIso.split('T')[1].slice(0, 5), reason: branch.holidaySchedule.reason || ''
+        });
+      } else {
+        setHolidayUI({ isEnabled: false, startDate: '', startTime: '00:00', endDate: '', endTime: '23:59', reason: '' });
+      }
     } else {
-      setHolidayUI({ isEnabled: false, startDate: '', startTime: '00:00', endDate: '', endTime: '23:59', reason: '' });
+      // Create Mode
+      resetForm();
+      setEditingId(null);
     }
     
-    if (formRef.current) formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // UI logic
+    setIsMobileFormOpen(true);
+    if (window.innerWidth >= 768 && formRef.current) {
+      formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const resetForm = () => {
+    setFormData({ id: '', name: '', manager: '', address: '', phoneNumber: '', isActive: true, note: '' });
+    setHolidayUI({ isEnabled: false, startDate: '', startTime: '00:00', endDate: '', endTime: '23:59', reason: '' });
+  };
+
+  const handleCancelEdit = () => { 
+    setEditingId(null); 
+    resetForm();
+    setIsMobileFormOpen(false); // Quan trọng cho mobile
   };
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
@@ -318,16 +335,13 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
       const oldBranch = branches.find(b => b.id === editingId)!;
       isTempId = editingId.startsWith('init-') || editingId.startsWith('gen-');
       
-      // -- LOGIC CẬP NHẬT LỊCH SỬ (Đã clean từ đầu vào, giờ chỉ thêm mới) --
       let currentHistory = [...(oldBranch.holidayHistory || [])];
       
       if (finalSchedule.isEnabled) {
-         // Lọc trùng trước khi push
          currentHistory = currentHistory.filter(h => 
             !(h.startTime === finalSchedule.startTime && h.endTime === finalSchedule.endTime)
          );
          currentHistory.push(finalSchedule);
-         // Sort mới nhất lên đầu
          currentHistory.sort((a, b) => new Date(b.startTime).getTime() - new Date(a.startTime).getTime());
       }
 
@@ -356,7 +370,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
       setBranches([newBranchData, ...branches]);
     }
     
-    handleCancelEdit(); 
+    handleCancelEdit(); // Đóng form ngay sau khi bấm lưu
 
     const payload = (isUpdate && isTempId) 
         ? { ...newBranchData, originalName: previousBranches.find(b => b.id === editingId)?.originalName } 
@@ -372,31 +386,22 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
       });
   };
 
-  const resetForm = () => {
-    setFormData({ id: '', name: '', manager: '', address: '', phoneNumber: '', isActive: true, note: '' });
-    setHolidayUI({ isEnabled: false, startDate: '', startTime: '00:00', endDate: '', endTime: '23:59', reason: '' });
-  };
-
-  const handleCancelEdit = () => { setEditingId(null); resetForm(); };
-
   const filteredBranches = branches.filter(b => {
     const s = searchTerm.toLowerCase();
     return (b.name||"").toLowerCase().includes(s) || (b.address||"").toLowerCase().includes(s) || (b.manager||"").toLowerCase().includes(s);
   }).sort((a, b) => {
-     // Sort ưu tiên: Đang nghỉ -> Sắp nghỉ -> Bình thường
      const getPriority = (branch: Branch) => {
         if (!branch.holidaySchedule?.isEnabled) return 3;
         const start = new Date(branch.holidaySchedule.startTime);
         const end = new Date(branch.holidaySchedule.endTime);
-        if (now >= start && now <= end) return 1; // Đang nghỉ
-        if (now < start) return 2; // Sắp nghỉ
+        if (now >= start && now <= end) return 1;
+        if (now < start) return 2;
         return 3;
      };
 
      const pA = getPriority(a);
      const pB = getPriority(b);
      if (pA !== pB) return pA - pB;
-
      return (a.name || "").localeCompare(b.name || "");
   });
 
@@ -444,8 +449,132 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
     );
   }
 
+  // --- COMPONENT: FORM NHẬP LIỆU (Được tách ra để tái sử dụng) ---
+  const BranchForm = () => (
+    <div className={`h-full flex flex-col ${isMobileFormOpen ? 'bg-gray-50' : 'bg-white'}`}>
+       {/* Mobile Header cho Form */}
+       <div className="md:hidden flex items-center justify-between p-4 bg-white border-b sticky top-0 z-20 shadow-sm">
+          <button onClick={handleCancelEdit} className="text-gray-600 font-bold flex items-center gap-1">
+             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" /></svg>
+             Quay lại
+          </button>
+          <h3 className="font-bold text-lg text-[#8B1E1E]">{editingId ? "Sửa Chi Nhánh" : "Thêm Mới"}</h3>
+          <div className="w-16"></div> {/* Spacer */}
+       </div>
+
+       <div className={`p-4 md:p-5 relative overflow-y-auto flex-1 transition-colors duration-300 ${editingId ? 'bg-amber-50' : 'bg-white'}`}>
+          <h3 className={`hidden md:flex text-lg font-bold mb-4 border-b pb-2 items-center gap-2 ${editingId ? 'text-[#D4AF37]' : 'text-[#8B1E1E]'}`}>
+            {editingId ? <span>✏️ Cập Nhật Chi Nhánh</span> : <span>➕ Thêm Chi Nhánh Mới</span>}
+          </h3>
+          
+          <form onSubmit={handleSave} className="space-y-4 pb-20 md:pb-0" autoComplete="off">
+            <div className="flex items-center justify-between bg-gray-50 p-3 rounded border border-gray-200">
+              <span className="text-sm font-bold text-gray-700 uppercase">Trạng thái</span>
+              <div className="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
+                <input type="checkbox" name="toggle" id="toggle" checked={formData.isActive} onChange={e => setFormData({...formData, isActive: e.target.checked})} className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer border-gray-300 checked:right-0 checked:border-[#8B1E1E]"/>
+                <label htmlFor="toggle" className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer ${formData.isActive ? 'bg-[#8B1E1E]' : 'bg-gray-300'}`}></label>
+              </div>
+            </div>
+
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tên Chi Nhánh <span className="text-red-500">*</span></label>
+              <input type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-[#8B1E1E]/20 outline-none text-base bg-white" required placeholder="VD: CN Đống Đa" />
+            </div>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Quản Lý</label>
+                <input type="text" value={formData.manager} onChange={e => setFormData({...formData, manager: e.target.value})} className="w-full p-3 border rounded-lg outline-none text-base bg-white" placeholder="Tên QL"/>
+              </div>
+              <div>
+                <label className="block text-xs font-bold text-gray-500 uppercase mb-1">SĐT</label>
+                <input type="tel" value={formData.phoneNumber} onChange={e => setFormData({...formData, phoneNumber: e.target.value})} className="w-full p-3 border rounded-lg outline-none text-base bg-white" placeholder="09xxxx"/>
+              </div>
+            </div>
+            <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Địa Chỉ <span className="text-red-500">*</span></label>
+              <textarea rows={3} value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} className="w-full p-3 border rounded-lg resize-none focus:ring-2 focus:ring-[#8B1E1E]/20 outline-none text-base bg-white" required placeholder="Số nhà, đường, phường, quận..." />
+            </div>
+
+            <div className={`border rounded-lg p-3 ${holidayUI.isEnabled ? 'bg-red-50 border-red-200' : 'bg-white border-dashed border-gray-300'}`}>
+              <div className="flex items-center justify-between mb-2">
+                <label className="text-xs font-bold text-[#8B1E1E] uppercase flex items-center gap-1">
+                  <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
+                  Bếp nghỉ
+                </label>
+                <input type="checkbox" checked={holidayUI.isEnabled} onChange={handleToggleHoliday} className="w-6 h-6 accent-[#8B1E1E]" />
+              </div>
+              {holidayUI.isEnabled && (
+                <div className="space-y-3 text-sm animate-fade-in">
+                   <div className="flex flex-col gap-1">
+                      <span className="text-xs font-bold text-gray-500">Bắt đầu:</span> 
+                      <div className="flex gap-2">
+                         <input type="date" value={holidayUI.startDate} onChange={e => setHolidayUI({...holidayUI, startDate: e.target.value})} className="border p-2 rounded flex-1 bg-white"/> 
+                         <TimePicker24h value={holidayUI.startTime} onChange={v => setHolidayUI({...holidayUI, startTime: v})}/>
+                      </div>
+                   </div>
+                   <div className="flex flex-col gap-1">
+                      <span className="text-xs font-bold text-gray-500">Kết thúc:</span>
+                      <div className="flex gap-2">
+                         <input type="date" value={holidayUI.endDate} onChange={e => setHolidayUI({...holidayUI, endDate: e.target.value})} className="border p-2 rounded flex-1 bg-white"/> 
+                         <TimePicker24h value={holidayUI.endTime} onChange={v => setHolidayUI({...holidayUI, endTime: v})}/>
+                      </div>
+                   </div>
+                   <input type="text" value={holidayUI.reason} onChange={e => setHolidayUI({...holidayUI, reason: e.target.value})} placeholder="Lý do nghỉ..." className="w-full border p-2 rounded bg-white"/>
+                </div>
+              )}
+            </div>
+
+            {editingId && (
+              <div className="mt-4 pt-4 border-t border-gray-200">
+                <label className="text-xs font-bold text-gray-500 uppercase mb-2 flex justify-between items-center">
+                  <span>Thống kê lịch sử nghỉ:</span>
+                  <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-[10px]">
+                    {currentEditingBranch?.holidayHistory?.length || 0} lần
+                  </span>
+                </label>
+                {Object.keys(editingStats).length > 0 ? (
+                  <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-1">
+                    {Object.entries(editingStats).sort((a,b) => Number(b[0]) - Number(a[0])).map(([year, stat]: any) => (
+                       <div key={year} className="bg-white rounded border border-gray-200 p-2 text-xs">
+                          <div className="flex justify-between font-bold text-[#8B1E1E] mb-1">
+                             <span>Năm {year}</span>
+                             <span>Tổng: {stat.total} lần</span>
+                          </div>
+                          <div className="flex flex-wrap gap-1">
+                             {Object.entries(stat.months).map(([m, c]) => (
+                                <span key={m} className="bg-gray-50 border px-1.5 rounded text-gray-600 font-medium">
+                                  T{m}: <span className="text-black">{c as any}</span>
+                                </span>
+                             ))}
+                          </div>
+                       </div>
+                    ))}
+                  </div>
+                ) : (
+                  <p className="text-xs text-gray-400 italic text-center py-2 border border-dashed rounded bg-gray-50">Chưa có dữ liệu lịch sử</p>
+                )}
+              </div>
+            )}
+
+             <div>
+              <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ghi chú (Nội bộ)</label>
+              <input type="text" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} className="w-full p-2 border bg-yellow-50 rounded text-sm" placeholder="Ghi chú admin..." />
+            </div>
+
+            <div className="flex gap-3 pt-2 pb-6 md:pb-0 sticky bottom-0 bg-white/95 backdrop-blur border-t md:border-t-0 p-4 md:p-0 -mx-4 md:mx-0 shadow-[0_-5px_10px_rgba(0,0,0,0.05)] md:shadow-none z-10">
+               <button type="submit" className={`flex-1 text-white font-bold py-3.5 rounded-lg shadow-md transition-transform active:scale-95 text-sm uppercase flex items-center justify-center gap-2 ${editingId ? 'bg-[#D4AF37]' : 'bg-[#8B1E1E]'}`}>
+                 {editingId ? <span>💾 Lưu Thay Đổi</span> : <span>➕ Thêm Mới</span>}
+               </button>
+               {editingId && <button type="button" onClick={handleCancelEdit} className="px-5 bg-gray-200 font-bold rounded-lg hover:bg-gray-300 text-sm">Hủy</button>}
+            </div>
+          </form>
+       </div>
+    </div>
+  );
+
+  // --- MAIN LAYOUT ---
   return (
-    <div className="bg-white h-screen flex flex-col relative">
+    <div className="bg-white h-screen flex flex-col relative overflow-hidden">
       {/* --- TOAST NOTIFICATION --- */}
       {toast && (
          <div className={`fixed top-4 right-4 z-[100] px-5 py-3 rounded-lg shadow-xl flex items-center gap-3 transition-all transform duration-300 animate-fade-in ${toast.type === 'success' ? 'bg-green-600 text-white' : toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-[#D4AF37] text-white'}`}>
@@ -460,13 +589,13 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
          </div>
       )}
 
-      {/* HEADER */}
-      <div className="bg-[#8B1E1E] px-4 py-3 md:px-6 md:py-4 flex justify-between items-center text-white flex-shrink-0 z-50 shadow-md">
+      {/* HEADER (Sticky on Mobile, Static on Desktop) */}
+      <div className={`bg-[#8B1E1E] px-4 py-3 md:px-6 md:py-4 flex justify-between items-center text-white flex-shrink-0 z-30 shadow-md ${isMobileFormOpen ? 'hidden md:flex' : 'flex'}`}>
         <div className="flex items-center gap-4">
            <div className="flex flex-col">
               <h2 className="text-lg md:text-xl font-bold font-brand uppercase tracking-wider">Trường Bào Ngư</h2>
               <span className="text-[10px] opacity-80 uppercase tracking-widest flex items-center gap-2">
-                 Hệ thống quản trị
+                 Admin V2
                  <span className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[9px] font-bold ${branches.length > 0 ? 'bg-green-500/20 text-green-200 border border-green-500/50' : 'bg-red-500/20 text-red-200 border border-red-500/50'}`}>
                     <span className={`w-1.5 h-1.5 rounded-full ${branches.length > 0 ? 'bg-green-400 animate-pulse' : 'bg-red-500'}`}></span>
                     {branches.length > 0 ? 'Online' : 'Offline'}
@@ -474,13 +603,20 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
               </span>
            </div>
            
-           <div className="flex bg-[#601414] p-1 rounded-lg ml-4">
+           {/* DESKTOP TABS */}
+           <div className="hidden md:flex bg-[#601414] p-1 rounded-lg ml-4">
               <button onClick={() => setActiveTab('branches')} className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase transition-all ${activeTab === 'branches' ? 'bg-white text-[#8B1E1E] shadow' : 'text-white/70 hover:text-white'}`}>Chi Nhánh</button>
               <button onClick={() => setActiveTab('logs')} className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase transition-all ${activeTab === 'logs' ? 'bg-white text-[#8B1E1E] shadow' : 'text-white/70 hover:text-white'}`}>Nhật Ký</button>
            </div>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex gap-2 items-center">
+          {/* MOBILE TABS SWITCHER */}
+          <div className="md:hidden flex bg-[#601414] p-0.5 rounded-lg mr-2">
+             <button onClick={() => setActiveTab('branches')} className={`p-2 rounded text-[10px] font-bold uppercase ${activeTab === 'branches' ? 'bg-white text-[#8B1E1E]' : 'text-white'}`}>Chi Nhánh</button>
+             <button onClick={() => setActiveTab('logs')} className={`p-2 rounded text-[10px] font-bold uppercase ${activeTab === 'logs' ? 'bg-white text-[#8B1E1E]' : 'text-white'}`}>Logs</button>
+          </div>
+
           {activeTab === 'branches' && (
             <button onClick={() => setShowConfig(!showConfig)} className={`p-2 rounded-full transition-all border ${showConfig ? 'bg-white text-[#8B1E1E] border-white' : 'bg-white/10 hover:bg-white/20 text-white border-transparent'}`} title="Cấu hình kết nối Sheet">
               <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
@@ -496,7 +632,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
       </div>
 
       {showConfig && activeTab === 'branches' && (
-        <div className="bg-gray-800 text-white p-4 border-b border-gray-600 animate-fade-in shadow-inner flex-shrink-0">
+        <div className="bg-gray-800 text-white p-4 border-b border-gray-600 animate-fade-in shadow-inner flex-shrink-0 z-20 relative">
            <p className="text-xs text-gray-400 mb-1 uppercase font-bold">Google Apps Script URL (Exec Link):</p>
            <div className="flex flex-col gap-2">
              <div className="flex gap-2 items-center">
@@ -514,124 +650,36 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
       <div className="flex-1 overflow-hidden bg-gray-100 relative flex flex-col md:flex-row">
         {activeTab === 'branches' && (
           <>
-            <div className="md:w-1/3 lg:w-1/4 overflow-y-auto pr-0 border-b md:border-b-0 md:border-r border-gray-200 bg-white order-2 md:order-1 shadow-xl z-10" ref={formRef}>
-               <div className={`p-4 md:p-5 relative transition-colors duration-300 ${editingId ? 'bg-amber-50' : 'bg-white'}`}>
-                  <h3 className={`text-lg font-bold mb-4 border-b pb-2 flex items-center gap-2 ${editingId ? 'text-[#D4AF37]' : 'text-[#8B1E1E]'}`}>
-                    {editingId ? <span>✏️ Cập Nhật Chi Nhánh</span> : <span>➕ Thêm Chi Nhánh Mới</span>}
-                  </h3>
-                  
-                  <form onSubmit={handleSave} className="space-y-4" autoComplete="off">
-                    <div className="flex items-center justify-between bg-gray-50 p-3 rounded border border-gray-200">
-                      <span className="text-sm font-bold text-gray-700 uppercase">Trạng thái</span>
-                      <div className="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
-                        <input type="checkbox" name="toggle" id="toggle" checked={formData.isActive} onChange={e => setFormData({...formData, isActive: e.target.checked})} className="toggle-checkbox absolute block w-6 h-6 rounded-full bg-white border-4 appearance-none cursor-pointer border-gray-300 checked:right-0 checked:border-[#8B1E1E]"/>
-                        <label htmlFor="toggle" className={`toggle-label block overflow-hidden h-6 rounded-full cursor-pointer ${formData.isActive ? 'bg-[#8B1E1E]' : 'bg-gray-300'}`}></label>
-                      </div>
-                    </div>
+            {/* 
+               VIEW CONTROL LOGIC:
+               - Desktop: Luôn hiển thị cả Form (Left) và List (Right)
+               - Mobile: 
+                  + Mặc định hiển thị List.
+                  + Khi isMobileFormOpen = true -> Hiển thị Form (đè lên List).
+            */}
 
-                    <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Tên Chi Nhánh <span className="text-red-500">*</span></label>
-                      <input type="text" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} className="w-full p-3 border rounded-lg focus:ring-2 focus:ring-[#8B1E1E]/20 outline-none text-base" required placeholder="VD: CN Đống Đa" />
-                    </div>
-                    <div className="grid grid-cols-2 gap-3">
-                      <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Quản Lý</label>
-                        <input type="text" value={formData.manager} onChange={e => setFormData({...formData, manager: e.target.value})} className="w-full p-3 border rounded-lg outline-none text-base" placeholder="Tên QL"/>
-                      </div>
-                      <div>
-                        <label className="block text-xs font-bold text-gray-500 uppercase mb-1">SĐT</label>
-                        <input type="tel" value={formData.phoneNumber} onChange={e => setFormData({...formData, phoneNumber: e.target.value})} className="w-full p-3 border rounded-lg outline-none text-base" placeholder="09xxxx"/>
-                      </div>
-                    </div>
-                    <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Địa Chỉ <span className="text-red-500">*</span></label>
-                      <textarea rows={3} value={formData.address} onChange={e => setFormData({...formData, address: e.target.value})} className="w-full p-3 border rounded-lg resize-none focus:ring-2 focus:ring-[#8B1E1E]/20 outline-none text-base" required placeholder="Số nhà, đường, phường, quận..." />
-                    </div>
-
-                    <div className={`border rounded-lg p-3 ${holidayUI.isEnabled ? 'bg-red-50 border-red-200' : 'bg-white border-dashed border-gray-300'}`}>
-                      <div className="flex items-center justify-between mb-2">
-                        <label className="text-xs font-bold text-[#8B1E1E] uppercase flex items-center gap-1">
-                          <svg xmlns="http://www.w3.org/2000/svg" className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>
-                          Bếp nghỉ
-                        </label>
-                        <input type="checkbox" checked={holidayUI.isEnabled} onChange={handleToggleHoliday} className="w-5 h-5 accent-[#8B1E1E]" />
-                      </div>
-                      {holidayUI.isEnabled && (
-                        <div className="space-y-3 text-sm animate-fade-in">
-                           <div className="flex flex-col gap-1">
-                              <span className="text-xs font-bold text-gray-500">Bắt đầu:</span> 
-                              <div className="flex gap-2">
-                                 <input type="date" value={holidayUI.startDate} onChange={e => setHolidayUI({...holidayUI, startDate: e.target.value})} className="border p-2 rounded flex-1 bg-white"/> 
-                                 <TimePicker24h value={holidayUI.startTime} onChange={v => setHolidayUI({...holidayUI, startTime: v})}/>
-                              </div>
-                           </div>
-                           <div className="flex flex-col gap-1">
-                              <span className="text-xs font-bold text-gray-500">Kết thúc:</span>
-                              <div className="flex gap-2">
-                                 <input type="date" value={holidayUI.endDate} onChange={e => setHolidayUI({...holidayUI, endDate: e.target.value})} className="border p-2 rounded flex-1 bg-white"/> 
-                                 <TimePicker24h value={holidayUI.endTime} onChange={v => setHolidayUI({...holidayUI, endTime: v})}/>
-                              </div>
-                           </div>
-                           <input type="text" value={holidayUI.reason} onChange={e => setHolidayUI({...holidayUI, reason: e.target.value})} placeholder="Lý do nghỉ..." className="w-full border p-2 rounded bg-white"/>
-                        </div>
-                      )}
-                    </div>
-
-                    {editingId && (
-                      <div className="mt-4 pt-4 border-t border-gray-200">
-                        <label className="text-xs font-bold text-gray-500 uppercase mb-2 flex justify-between items-center">
-                          <span>Thống kê lịch sử nghỉ:</span>
-                          <span className="bg-gray-100 text-gray-600 px-2 py-0.5 rounded-full text-[10px]">
-                            {currentEditingBranch?.holidayHistory?.length || 0} lần
-                          </span>
-                        </label>
-                        {Object.keys(editingStats).length > 0 ? (
-                          <div className="grid grid-cols-1 gap-2 max-h-40 overflow-y-auto custom-scrollbar pr-1">
-                            {Object.entries(editingStats).sort((a,b) => Number(b[0]) - Number(a[0])).map(([year, stat]: any) => (
-                               <div key={year} className="bg-gray-50 rounded border border-gray-200 p-2 text-xs">
-                                  <div className="flex justify-between font-bold text-[#8B1E1E] mb-1">
-                                     <span>Năm {year}</span>
-                                     <span>Tổng: {stat.total} lần</span>
-                                  </div>
-                                  <div className="flex flex-wrap gap-1">
-                                     {Object.entries(stat.months).map(([m, c]) => (
-                                        <span key={m} className="bg-white border px-1.5 rounded text-gray-600 font-medium">
-                                          T{m}: <span className="text-black">{c as any}</span>
-                                        </span>
-                                     ))}
-                                  </div>
-                               </div>
-                            ))}
-                          </div>
-                        ) : (
-                          <p className="text-xs text-gray-400 italic text-center py-2 border border-dashed rounded bg-gray-50">Chưa có dữ liệu lịch sử</p>
-                        )}
-                      </div>
-                    )}
-
-                     <div>
-                      <label className="block text-xs font-bold text-gray-500 uppercase mb-1">Ghi chú (Nội bộ)</label>
-                      <input type="text" value={formData.note} onChange={e => setFormData({...formData, note: e.target.value})} className="w-full p-2 border bg-yellow-50 rounded text-sm" placeholder="Ghi chú admin..." />
-                    </div>
-
-                    <div className="flex gap-3 pt-2 pb-6 md:pb-0">
-                       <button type="submit" className={`flex-1 text-white font-bold py-3.5 rounded-lg shadow-md transition-transform active:scale-95 text-sm uppercase flex items-center justify-center gap-2 ${editingId ? 'bg-[#D4AF37]' : 'bg-[#8B1E1E]'}`}>
-                         {editingId ? <span>💾 Lưu Thay Đổi</span> : <span>➕ Thêm Mới</span>}
-                       </button>
-                       {editingId && <button type="button" onClick={handleCancelEdit} className="px-5 bg-gray-200 font-bold rounded-lg hover:bg-gray-300 text-sm">Hủy</button>}
-                    </div>
-                  </form>
-               </div>
+            {/* --- LEFT COLUMN: FORM --- */}
+            {/* Desktop: Luôn hiện (w-1/3). Mobile: Chỉ hiện khi isMobileFormOpen=true (fixed full screen z-40) */}
+            <div 
+              ref={formRef}
+              className={`
+                 bg-white border-r border-gray-200 shadow-xl z-20 flex flex-col
+                 md:w-1/3 lg:w-1/4 md:relative md:order-1 
+                 ${isMobileFormOpen ? 'fixed inset-0 z-50 w-full h-full' : 'hidden md:flex'}
+              `}
+            >
+               <BranchForm />
             </div>
 
-            <div className="md:w-2/3 lg:w-3/4 flex flex-col h-full overflow-hidden order-1 md:order-2 bg-gray-50">
-              <div className="p-3 md:p-4 bg-white border-b border-gray-200 flex gap-2 flex-shrink-0 sticky top-0 z-20 shadow-sm">
-                 <input type="text" placeholder="Tìm kiếm nhanh..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="flex-1 px-4 py-2.5 border rounded-lg focus:outline-none focus:border-[#8B1E1E] bg-gray-50 text-base" />
-                 <div className="bg-[#8B1E1E] text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center">{filteredBranches.length}</div>
+            {/* --- RIGHT COLUMN: LIST --- */}
+            <div className="flex-1 flex flex-col h-full overflow-hidden order-1 md:order-2 bg-gray-50 relative">
+              <div className="p-3 md:p-4 bg-white border-b border-gray-200 flex gap-2 flex-shrink-0 sticky top-0 z-10 shadow-sm">
+                 <input type="text" placeholder="Tìm kiếm nhanh..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="flex-1 px-4 py-3 md:py-2.5 border rounded-lg focus:outline-none focus:border-[#8B1E1E] bg-gray-50 text-base shadow-inner" />
+                 <div className="bg-[#8B1E1E] text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center shadow">{filteredBranches.length}</div>
               </div>
 
-              <div className="flex-1 overflow-y-auto custom-scrollbar p-3 md:p-6">
-                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-4">
+              <div className="flex-1 overflow-y-auto custom-scrollbar p-3 md:p-6 pb-20 md:pb-6">
+                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 md:gap-4">
                    {filteredBranches.map(branch => {
                      const isHidden = branch.isActive === false;
                      let statusBadge = <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Hoạt động</span>;
@@ -649,20 +697,20 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
                      }
 
                      return (
-                       <div key={branch.id} className={`bg-white p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer ${editingId === branch.id ? 'ring-2 ring-[#D4AF37] bg-amber-50' : ''} ${isHidden ? 'opacity-60' : ''}`} onClick={(e) => handleEdit(e, branch)}>
+                       <div key={branch.id} className={`bg-white p-4 md:p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer ${editingId === branch.id ? 'ring-2 ring-[#D4AF37] bg-amber-50' : ''} ${isHidden ? 'opacity-60' : ''}`} onClick={(e) => openForm(branch)}>
                          <div className="flex justify-between items-start mb-2">
-                            <h4 className="font-bold text-[#8B1E1E] text-lg">{branch.name}</h4>
+                            <h4 className="font-bold text-[#8B1E1E] text-base md:text-lg">{branch.name}</h4>
                             {statusBadge}
                          </div>
-                         <p className="text-gray-600 text-sm mb-3 leading-snug font-medium">{branch.address}</p>
+                         <p className="text-gray-600 text-sm mb-3 leading-snug font-medium line-clamp-2">{branch.address}</p>
                          <div className="flex justify-between items-end border-t border-gray-100 pt-3">
                             <div className="text-xs text-gray-500 font-medium flex flex-col gap-1">
                                <span>QL: <span className="text-gray-800">{branch.manager}</span></span>
                                {branch.phoneNumber && <span>SĐT: <span className="text-gray-800">{branch.phoneNumber}</span></span>}
                             </div>
                             <div className="flex gap-2">
-                               <button onClick={(e) => handleEdit(e, branch)} className="text-blue-600 hover:text-white hover:bg-blue-600 font-bold text-xs uppercase px-3 py-1.5 border border-blue-200 rounded transition-colors">Sửa</button>
-                               <button onClick={(e) => handleDelete(e, branch.id)} className="text-red-600 hover:text-white hover:bg-red-600 font-bold text-xs uppercase px-3 py-1.5 border border-red-200 rounded transition-colors">Xóa</button>
+                               <button onClick={(e) => { e.stopPropagation(); openForm(branch); }} className="text-blue-600 bg-blue-50 hover:bg-blue-100 font-bold text-xs uppercase px-3 py-1.5 rounded transition-colors">Sửa</button>
+                               <button onClick={(e) => handleDelete(e, branch.id)} className="text-red-600 bg-red-50 hover:bg-red-100 font-bold text-xs uppercase px-3 py-1.5 rounded transition-colors">Xóa</button>
                             </div>
                          </div>
                        </div>
@@ -670,45 +718,55 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
                    })}
                  </div>
               </div>
+
+              {/* MOBILE FLOATING ACTION BUTTON (FAB) */}
+              <button 
+                onClick={() => openForm()}
+                className="md:hidden fixed bottom-6 right-6 w-14 h-14 bg-[#8B1E1E] text-white rounded-full shadow-[0_4px_15px_rgba(139,30,30,0.4)] flex items-center justify-center z-40 active:scale-90 transition-transform hover:bg-[#721515]"
+              >
+                 <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                 </svg>
+              </button>
             </div>
           </>
         )}
 
         {activeTab === 'logs' && (
            <div className="w-full h-full bg-gray-50 flex flex-col">
-              <div className="p-4 md:p-6 bg-white border-b flex justify-between items-end">
+              <div className="p-4 md:p-6 bg-white border-b flex justify-between items-end flex-shrink-0">
                 <div>
                    <h3 className="text-xl font-bold text-[#8B1E1E] mb-1">Lịch Sử Tra Cứu</h3>
                    <p className="text-sm text-gray-500">Nhật ký hoạt động của hệ thống.</p>
                 </div>
-                {loadingLogs && <div className="text-xs text-gray-400 italic animate-pulse">Đang tải dữ liệu...</div>}
+                {loadingLogs && <div className="text-xs text-gray-400 italic animate-pulse">Đang tải...</div>}
               </div>
 
-              <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-4">
-                 <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                    <p className="text-xs text-gray-400 font-bold uppercase">Tổng Log</p>
-                    <p className="text-2xl font-bold text-gray-800">{logs.length}</p>
+              <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-3 flex-shrink-0">
+                 <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
+                    <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Tổng Log</p>
+                    <p className="text-xl md:text-2xl font-bold text-gray-800">{logs.length}</p>
                  </div>
-                 <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                    <p className="text-xs text-gray-400 font-bold uppercase">Thành công</p>
-                    <p className="text-2xl font-bold text-green-600">{logs.filter(l => l.isSuccess).length}</p>
+                 <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
+                    <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Thành công</p>
+                    <p className="text-xl md:text-2xl font-bold text-green-600">{logs.filter(l => l.isSuccess).length}</p>
                  </div>
-                 <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                    <p className="text-xs text-gray-400 font-bold uppercase">Thất bại</p>
-                    <p className="text-2xl font-bold text-red-600">{logs.filter(l => !l.isSuccess).length}</p>
+                 <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
+                    <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Thất bại</p>
+                    <p className="text-xl md:text-2xl font-bold text-red-600">{logs.filter(l => !l.isSuccess).length}</p>
                  </div>
-                 <div className="bg-white p-4 rounded-xl border border-gray-200 shadow-sm">
-                    <p className="text-xs text-gray-400 font-bold uppercase">Tỉ lệ AI</p>
-                    <p className="text-2xl font-bold text-blue-600">
+                 <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
+                    <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Tỉ lệ AI</p>
+                    <p className="text-xl md:text-2xl font-bold text-blue-600">
                       {logs.length ? Math.round((logs.filter(l => l.source === 'AI').length / logs.length) * 100) : 0}%
                     </p>
                  </div>
               </div>
               
               <div className="flex-1 overflow-auto px-4 pb-4">
-                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
+                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden min-w-[600px] md:min-w-0">
                     <table className="w-full text-sm text-left border-collapse">
-                       <thead className="bg-gray-100 text-gray-600 font-bold uppercase text-xs sticky top-0">
+                       <thead className="bg-gray-100 text-gray-600 font-bold uppercase text-xs sticky top-0 shadow-sm">
                           <tr>
                              <th className="px-4 py-3 w-[150px]">Thời Gian</th>
                              <th className="px-4 py-3">Nội dung</th>
