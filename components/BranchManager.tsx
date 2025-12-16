@@ -73,14 +73,21 @@ const TimePicker24h = ({ value, onChange, disabled }: { value: string, onChange:
 };
 
 export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranches, onReload }) => {
+  // --- AUTH STATE & PERSISTENCE ---
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [loginPassword, setLoginPassword] = useState('');
 
-  const [activeTab, setActiveTab] = useState<'branches' | 'logs'>('branches');
-  
-  // --- STATE UI CONTROL ---
-  // isMobileFormOpen: Kiểm soát việc hiển thị form Full màn hình trên mobile
-  const [isMobileFormOpen, setIsMobileFormOpen] = useState(false);
+  // Kiểm tra phiên đăng nhập khi load trang
+  useEffect(() => {
+    const session = localStorage.getItem('admin_session');
+    if (session === 'active') {
+      setIsAuthenticated(true);
+    }
+  }, []);
+
+  // --- NAVIGATION STATE ---
+  // list: Danh sách | form: Sửa/Thêm | logs: Nhật ký
+  const [activeTab, setActiveTab] = useState<'list' | 'form' | 'logs'>('list');
   
   const [editingId, setEditingId] = useState<string | null>(null);
   const [showConfig, setShowConfig] = useState(false);
@@ -128,11 +135,18 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
     e.preventDefault();
     if (loginPassword === ADMIN_PASSWORD) {
       setIsAuthenticated(true);
+      localStorage.setItem('admin_session', 'active'); // Lưu phiên đăng nhập
       showToast("Đăng nhập thành công!", "success");
     } else {
       showToast("Mật khẩu không đúng!", "error");
       setLoginPassword('');
     }
+  };
+
+  const handleLogout = () => {
+    setIsAuthenticated(false);
+    localStorage.removeItem('admin_session');
+    setLoginPassword('');
   };
 
   const handleManualReload = async () => {
@@ -195,7 +209,7 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
 
   // --- ACTIONS ---
 
-  const openForm = (branch?: Branch) => {
+  const prepareForm = (branch?: Branch) => {
     if (branch) {
       // Edit Mode
       setEditingId(branch.id);
@@ -232,11 +246,8 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
       setEditingId(null);
     }
     
-    // UI logic
-    setIsMobileFormOpen(true);
-    if (window.innerWidth >= 768 && formRef.current) {
-      formRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' });
-    }
+    // Switch tab to form
+    setActiveTab('form');
   };
 
   const resetForm = () => {
@@ -247,7 +258,8 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
   const handleCancelEdit = () => { 
     setEditingId(null); 
     resetForm();
-    setIsMobileFormOpen(false); // Quan trọng cho mobile
+    // Về list nếu đang ở mobile
+    setActiveTab('list');
   };
 
   const handleDelete = async (e: React.MouseEvent, id: string) => {
@@ -370,7 +382,10 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
       setBranches([newBranchData, ...branches]);
     }
     
-    handleCancelEdit(); // Đóng form ngay sau khi bấm lưu
+    // Sau khi save thì về list
+    setActiveTab('list');
+    setEditingId(null);
+    resetForm();
 
     const payload = (isUpdate && isTempId) 
         ? { ...newBranchData, originalName: previousBranches.find(b => b.id === editingId)?.originalName } 
@@ -449,25 +464,15 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
     );
   }
 
-  // --- COMPONENT: FORM NHẬP LIỆU (Được tách ra để tái sử dụng) ---
+  // --- COMPONENT: FORM NHẬP LIỆU (Reused) ---
   const BranchForm = () => (
-    <div className={`h-full flex flex-col ${isMobileFormOpen ? 'bg-gray-50' : 'bg-white'}`}>
-       {/* Mobile Header cho Form */}
-       <div className="md:hidden flex items-center justify-between p-4 bg-white border-b sticky top-0 z-20 shadow-sm">
-          <button onClick={handleCancelEdit} className="text-gray-600 font-bold flex items-center gap-1">
-             <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M9.707 16.707a1 1 0 01-1.414 0l-6-6a1 1 0 010-1.414l6-6a1 1 0 011.414 1.414L5.414 9H17a1 1 0 110 2H5.414l4.293 4.293a1 1 0 010 1.414z" clipRule="evenodd" /></svg>
-             Quay lại
-          </button>
-          <h3 className="font-bold text-lg text-[#8B1E1E]">{editingId ? "Sửa Chi Nhánh" : "Thêm Mới"}</h3>
-          <div className="w-16"></div> {/* Spacer */}
-       </div>
-
+    <div className={`h-full flex flex-col bg-white`}>
        <div className={`p-4 md:p-5 relative overflow-y-auto flex-1 transition-colors duration-300 ${editingId ? 'bg-amber-50' : 'bg-white'}`}>
-          <h3 className={`hidden md:flex text-lg font-bold mb-4 border-b pb-2 items-center gap-2 ${editingId ? 'text-[#D4AF37]' : 'text-[#8B1E1E]'}`}>
+          <h3 className={`text-lg font-bold mb-4 border-b pb-2 flex items-center gap-2 ${editingId ? 'text-[#D4AF37]' : 'text-[#8B1E1E]'}`}>
             {editingId ? <span>✏️ Cập Nhật Chi Nhánh</span> : <span>➕ Thêm Chi Nhánh Mới</span>}
           </h3>
           
-          <form onSubmit={handleSave} className="space-y-4 pb-20 md:pb-0" autoComplete="off">
+          <form onSubmit={handleSave} className="space-y-4 pb-24 md:pb-0" autoComplete="off">
             <div className="flex items-center justify-between bg-gray-50 p-3 rounded border border-gray-200">
               <span className="text-sm font-bold text-gray-700 uppercase">Trạng thái</span>
               <div className="relative inline-block w-12 mr-2 align-middle select-none transition duration-200 ease-in">
@@ -572,25 +577,98 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
     </div>
   );
 
-  // --- MAIN LAYOUT ---
+  // --- LOGS COMPONENT ---
+  const LogsView = () => (
+    <div className="w-full h-full bg-gray-50 flex flex-col pb-16 md:pb-0">
+      <div className="p-4 md:p-6 bg-white border-b flex justify-between items-end flex-shrink-0">
+        <div>
+            <h3 className="text-xl font-bold text-[#8B1E1E] mb-1">Lịch Sử Tra Cứu</h3>
+            <p className="text-sm text-gray-500">Nhật ký hoạt động của hệ thống.</p>
+        </div>
+        {loadingLogs && <div className="text-xs text-gray-400 italic animate-pulse">Đang tải...</div>}
+      </div>
+
+      <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-3 flex-shrink-0">
+          <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
+            <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Tổng Log</p>
+            <p className="text-xl md:text-2xl font-bold text-gray-800">{logs.length}</p>
+          </div>
+          <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
+            <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Thành công</p>
+            <p className="text-xl md:text-2xl font-bold text-green-600">{logs.filter(l => l.isSuccess).length}</p>
+          </div>
+          <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
+            <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Thất bại</p>
+            <p className="text-xl md:text-2xl font-bold text-red-600">{logs.filter(l => !l.isSuccess).length}</p>
+          </div>
+          <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
+            <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Tỉ lệ AI</p>
+            <p className="text-xl md:text-2xl font-bold text-blue-600">
+              {logs.length ? Math.round((logs.filter(l => l.source === 'AI').length / logs.length) * 100) : 0}%
+            </p>
+          </div>
+      </div>
+      
+      <div className="flex-1 overflow-auto px-4 pb-4">
+          <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden min-w-[600px] md:min-w-0">
+            <table className="w-full text-sm text-left border-collapse">
+                <thead className="bg-gray-100 text-gray-600 font-bold uppercase text-xs sticky top-0 shadow-sm">
+                  <tr>
+                      <th className="px-4 py-3 w-[150px]">Thời Gian</th>
+                      <th className="px-4 py-3">Nội dung</th>
+                      <th className="px-4 py-3">Kết quả</th>
+                      <th className="px-4 py-3 text-center w-[100px]">Nguồn</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-100">
+                  {logs.map(log => (
+                      <tr key={log.id} className="hover:bg-gray-50">
+                        <td className="px-4 py-3 text-gray-500 text-xs">
+                            {new Date(log.timestamp).toLocaleString('vi-VN')}
+                        </td>
+                        <td className="px-4 py-3 font-medium text-gray-800">
+                            {log.query}
+                        </td>
+                        <td className="px-4 py-3">
+                            {log.isSuccess ? (
+                              <span className="text-green-700 font-bold flex items-center gap-1">
+                                ✓ {log.resultBranch}
+                              </span>
+                            ) : (
+                              <span className="text-red-500 text-xs">{log.resultBranch || 'Lỗi không xác định'}</span>
+                            )}
+                        </td>
+                        <td className="px-4 py-3 text-center">
+                            <span className={`text-[10px] font-bold px-2 py-1 rounded border ${log.source === 'AI' ? 'bg-blue-50 text-blue-600 border-blue-200' : log.source === 'FAIL' ? 'bg-red-50 text-red-600 border-red-200' : 'bg-green-50 text-green-600 border-green-200'}`}>
+                              {log.source}
+                            </span>
+                        </td>
+                      </tr>
+                  ))}
+                  {logs.length === 0 && (
+                      <tr>
+                        <td colSpan={4} className="text-center py-8 text-gray-400 italic">Chưa có lịch sử tìm kiếm nào được ghi nhận.</td>
+                      </tr>
+                  )}
+                </tbody>
+            </table>
+          </div>
+      </div>
+    </div>
+  );
+
+  // --- MAIN RENDER ---
   return (
     <div className="bg-white h-screen flex flex-col relative overflow-hidden">
       {/* --- TOAST NOTIFICATION --- */}
       {toast && (
          <div className={`fixed top-4 right-4 z-[100] px-5 py-3 rounded-lg shadow-xl flex items-center gap-3 transition-all transform duration-300 animate-fade-in ${toast.type === 'success' ? 'bg-green-600 text-white' : toast.type === 'error' ? 'bg-red-600 text-white' : 'bg-[#D4AF37] text-white'}`}>
-            {toast.type === 'loading' ? (
-               <svg className="animate-spin h-5 w-5 text-white" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24"><circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle><path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path></svg>
-            ) : toast.type === 'success' ? (
-               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M10 18a8 8 0 100-16 8 8 0 000 16zm3.707-9.293a1 1 0 00-1.414-1.414L9 10.586 7.707 9.293a1 1 0 00-1.414 1.414l2 2a1 1 0 001.414 0l4-4z" clipRule="evenodd" /></svg>
-            ) : (
-               <svg xmlns="http://www.w3.org/2000/svg" className="h-5 w-5" viewBox="0 0 20 20" fill="currentColor"><path fillRule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clipRule="evenodd" /></svg>
-            )}
             <span className="font-bold text-sm">{toast.msg}</span>
          </div>
       )}
 
       {/* HEADER (Sticky on Mobile, Static on Desktop) */}
-      <div className={`bg-[#8B1E1E] px-4 py-3 md:px-6 md:py-4 flex justify-between items-center text-white flex-shrink-0 z-30 shadow-md ${isMobileFormOpen ? 'hidden md:flex' : 'flex'}`}>
+      <div className={`bg-[#8B1E1E] px-4 py-3 md:px-6 md:py-4 flex justify-between items-center text-white flex-shrink-0 z-30 shadow-md`}>
         <div className="flex items-center gap-4">
            <div className="flex flex-col">
               <h2 className="text-lg md:text-xl font-bold font-brand uppercase tracking-wider">Trường Bào Ngư</h2>
@@ -605,34 +683,36 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
            
            {/* DESKTOP TABS */}
            <div className="hidden md:flex bg-[#601414] p-1 rounded-lg ml-4">
-              <button onClick={() => setActiveTab('branches')} className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase transition-all ${activeTab === 'branches' ? 'bg-white text-[#8B1E1E] shadow' : 'text-white/70 hover:text-white'}`}>Chi Nhánh</button>
+              <button onClick={() => setActiveTab('list')} className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase transition-all ${(activeTab === 'list' || activeTab === 'form') ? 'bg-white text-[#8B1E1E] shadow' : 'text-white/70 hover:text-white'}`}>Chi Nhánh</button>
               <button onClick={() => setActiveTab('logs')} className={`px-3 py-1.5 rounded-md text-xs font-bold uppercase transition-all ${activeTab === 'logs' ? 'bg-white text-[#8B1E1E] shadow' : 'text-white/70 hover:text-white'}`}>Nhật Ký</button>
            </div>
         </div>
 
         <div className="flex gap-2 items-center">
-          {/* MOBILE TABS SWITCHER */}
-          <div className="md:hidden flex bg-[#601414] p-0.5 rounded-lg mr-2">
-             <button onClick={() => setActiveTab('branches')} className={`p-2 rounded text-[10px] font-bold uppercase ${activeTab === 'branches' ? 'bg-white text-[#8B1E1E]' : 'text-white'}`}>Chi Nhánh</button>
-             <button onClick={() => setActiveTab('logs')} className={`p-2 rounded text-[10px] font-bold uppercase ${activeTab === 'logs' ? 'bg-white text-[#8B1E1E]' : 'text-white'}`}>Logs</button>
-          </div>
-
-          {activeTab === 'branches' && (
-            <button onClick={() => setShowConfig(!showConfig)} className={`p-2 rounded-full transition-all border ${showConfig ? 'bg-white text-[#8B1E1E] border-white' : 'bg-white/10 hover:bg-white/20 text-white border-transparent'}`} title="Cấu hình kết nối Sheet">
+          {/* DESKTOP: Config Toggle */}
+          {(activeTab === 'list' || activeTab === 'form') && (
+            <button onClick={() => setShowConfig(!showConfig)} className={`hidden md:block p-2 rounded-full transition-all border ${showConfig ? 'bg-white text-[#8B1E1E] border-white' : 'bg-white/10 hover:bg-white/20 text-white border-transparent'}`} title="Cấu hình kết nối Sheet">
               <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5">
                 <path strokeLinecap="round" strokeLinejoin="round" d="M10.5 6a7.5 7.5 0 107.5 7.5h-7.5V6z"/>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M13.5 10.5H21A7.5 7.5 0 0013.5 3v7.5z"/>
               </svg>
             </button>
           )}
+          
           <button onClick={handleManualReload} className="p-2 hover:bg-white/20 rounded-full text-white" title="Tải lại dữ liệu">
               <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2"><path strokeLinecap="round" strokeLinejoin="round" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+          </button>
+          
+          <button onClick={handleLogout} className="p-2 hover:bg-white/20 rounded-full text-white" title="Đăng xuất">
+              <svg xmlns="http://www.w3.org/2000/svg" className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth="2">
+                <path strokeLinecap="round" strokeLinejoin="round" d="M17 16l4-4m0 0l-4-4m4 4H7m6 4v1a3 3 0 01-3 3H6a3 3 0 01-3-3V7a3 3 0 013-3h4a3 3 0 013 3v1" />
+              </svg>
           </button>
         </div>
       </div>
 
-      {showConfig && activeTab === 'branches' && (
-        <div className="bg-gray-800 text-white p-4 border-b border-gray-600 animate-fade-in shadow-inner flex-shrink-0 z-20 relative">
+      {showConfig && activeTab !== 'logs' && (
+        <div className="bg-gray-800 text-white p-4 border-b border-gray-600 animate-fade-in shadow-inner flex-shrink-0 z-20 relative hidden md:block">
            <p className="text-xs text-gray-400 mb-1 uppercase font-bold">Google Apps Script URL (Exec Link):</p>
            <div className="flex flex-col gap-2">
              <div className="flex gap-2 items-center">
@@ -647,170 +727,128 @@ export const BranchManager: React.FC<BranchManagerProps> = ({ branches, setBranc
         </div>
       )}
 
+      {/* --- CONTENT AREA --- */}
       <div className="flex-1 overflow-hidden bg-gray-100 relative flex flex-col md:flex-row">
-        {activeTab === 'branches' && (
-          <>
-            {/* 
-               VIEW CONTROL LOGIC:
-               - Desktop: Luôn hiển thị cả Form (Left) và List (Right)
-               - Mobile: 
-                  + Mặc định hiển thị List.
-                  + Khi isMobileFormOpen = true -> Hiển thị Form (đè lên List).
-            */}
+        
+        {/* VIEW: LOGS */}
+        {activeTab === 'logs' && <LogsView />}
 
-            {/* --- LEFT COLUMN: FORM --- */}
-            {/* Desktop: Luôn hiện (w-1/3). Mobile: Chỉ hiện khi isMobileFormOpen=true (fixed full screen z-40) */}
-            <div 
-              ref={formRef}
-              className={`
-                 bg-white border-r border-gray-200 shadow-xl z-20 flex flex-col
-                 md:w-1/3 lg:w-1/4 md:relative md:order-1 
-                 ${isMobileFormOpen ? 'fixed inset-0 z-50 w-full h-full' : 'hidden md:flex'}
-              `}
-            >
-               <BranchForm />
-            </div>
-
-            {/* --- RIGHT COLUMN: LIST --- */}
-            <div className="flex-1 flex flex-col h-full overflow-hidden order-1 md:order-2 bg-gray-50 relative">
-              <div className="p-3 md:p-4 bg-white border-b border-gray-200 flex gap-2 flex-shrink-0 sticky top-0 z-10 shadow-sm">
-                 <input type="text" placeholder="Tìm kiếm nhanh..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="flex-1 px-4 py-3 md:py-2.5 border rounded-lg focus:outline-none focus:border-[#8B1E1E] bg-gray-50 text-base shadow-inner" />
-                 <div className="bg-[#8B1E1E] text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center shadow">{filteredBranches.length}</div>
-              </div>
-
-              <div className="flex-1 overflow-y-auto custom-scrollbar p-3 md:p-6 pb-20 md:pb-6">
-                 <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 md:gap-4">
-                   {filteredBranches.map(branch => {
-                     const isHidden = branch.isActive === false;
-                     let statusBadge = <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Hoạt động</span>;
-                     
-                     if (isHidden) {
-                        statusBadge = <span className="bg-gray-200 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Đã Ẩn</span>;
-                     } else if (branch.holidaySchedule?.isEnabled) {
-                        const start = new Date(branch.holidaySchedule.startTime);
-                        const end = new Date(branch.holidaySchedule.endTime);
-                        if (now >= start && now <= end) {
-                           statusBadge = <span className="bg-red-100 text-red-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase animate-pulse">Đang Nghỉ</span>;
-                        } else if (now < start) {
-                           statusBadge = <span className="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Sắp Nghỉ</span>;
-                        }
-                     }
-
-                     return (
-                       <div key={branch.id} className={`bg-white p-4 md:p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer ${editingId === branch.id ? 'ring-2 ring-[#D4AF37] bg-amber-50' : ''} ${isHidden ? 'opacity-60' : ''}`} onClick={(e) => openForm(branch)}>
-                         <div className="flex justify-between items-start mb-2">
-                            <h4 className="font-bold text-[#8B1E1E] text-base md:text-lg">{branch.name}</h4>
-                            {statusBadge}
-                         </div>
-                         <p className="text-gray-600 text-sm mb-3 leading-snug font-medium line-clamp-2">{branch.address}</p>
-                         <div className="flex justify-between items-end border-t border-gray-100 pt-3">
-                            <div className="text-xs text-gray-500 font-medium flex flex-col gap-1">
-                               <span>QL: <span className="text-gray-800">{branch.manager}</span></span>
-                               {branch.phoneNumber && <span>SĐT: <span className="text-gray-800">{branch.phoneNumber}</span></span>}
-                            </div>
-                            <div className="flex gap-2">
-                               <button onClick={(e) => { e.stopPropagation(); openForm(branch); }} className="text-blue-600 bg-blue-50 hover:bg-blue-100 font-bold text-xs uppercase px-3 py-1.5 rounded transition-colors">Sửa</button>
-                               <button onClick={(e) => handleDelete(e, branch.id)} className="text-red-600 bg-red-50 hover:bg-red-100 font-bold text-xs uppercase px-3 py-1.5 rounded transition-colors">Xóa</button>
-                            </div>
-                         </div>
-                       </div>
-                     )
-                   })}
-                 </div>
-              </div>
-
-              {/* MOBILE FLOATING ACTION BUTTON (FAB) */}
-              <button 
-                onClick={() => openForm()}
-                className="md:hidden fixed bottom-6 right-6 w-14 h-14 bg-[#8B1E1E] text-white rounded-full shadow-[0_4px_15px_rgba(139,30,30,0.4)] flex items-center justify-center z-40 active:scale-90 transition-transform hover:bg-[#721515]"
-              >
-                 <svg xmlns="http://www.w3.org/2000/svg" className="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
-                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
-                 </svg>
-              </button>
-            </div>
-          </>
-        )}
-
-        {activeTab === 'logs' && (
-           <div className="w-full h-full bg-gray-50 flex flex-col">
-              <div className="p-4 md:p-6 bg-white border-b flex justify-between items-end flex-shrink-0">
-                <div>
-                   <h3 className="text-xl font-bold text-[#8B1E1E] mb-1">Lịch Sử Tra Cứu</h3>
-                   <p className="text-sm text-gray-500">Nhật ký hoạt động của hệ thống.</p>
+        {/* VIEW: BRANCHES & FORM (Split on Desktop, Tabbed on Mobile) */}
+        {activeTab !== 'logs' && (
+            <>
+                {/* FORM COLUMN:
+                    - Mobile: Show only if activeTab is 'form'
+                    - Desktop: Always show (Split view)
+                */}
+                <div 
+                  ref={formRef}
+                  className={`
+                     bg-white border-r border-gray-200 shadow-xl z-20 flex flex-col
+                     md:w-1/3 lg:w-1/4 md:relative md:order-1 
+                     ${activeTab === 'form' ? 'flex flex-1' : 'hidden md:flex'}
+                  `}
+                >
+                   <BranchForm />
                 </div>
-                {loadingLogs && <div className="text-xs text-gray-400 italic animate-pulse">Đang tải...</div>}
-              </div>
 
-              <div className="p-4 grid grid-cols-2 md:grid-cols-4 gap-3 flex-shrink-0">
-                 <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
-                    <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Tổng Log</p>
-                    <p className="text-xl md:text-2xl font-bold text-gray-800">{logs.length}</p>
-                 </div>
-                 <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
-                    <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Thành công</p>
-                    <p className="text-xl md:text-2xl font-bold text-green-600">{logs.filter(l => l.isSuccess).length}</p>
-                 </div>
-                 <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
-                    <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Thất bại</p>
-                    <p className="text-xl md:text-2xl font-bold text-red-600">{logs.filter(l => !l.isSuccess).length}</p>
-                 </div>
-                 <div className="bg-white p-3 md:p-4 rounded-xl border border-gray-200 shadow-sm">
-                    <p className="text-[10px] md:text-xs text-gray-400 font-bold uppercase">Tỉ lệ AI</p>
-                    <p className="text-xl md:text-2xl font-bold text-blue-600">
-                      {logs.length ? Math.round((logs.filter(l => l.source === 'AI').length / logs.length) * 100) : 0}%
-                    </p>
-                 </div>
-              </div>
-              
-              <div className="flex-1 overflow-auto px-4 pb-4">
-                 <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden min-w-[600px] md:min-w-0">
-                    <table className="w-full text-sm text-left border-collapse">
-                       <thead className="bg-gray-100 text-gray-600 font-bold uppercase text-xs sticky top-0 shadow-sm">
-                          <tr>
-                             <th className="px-4 py-3 w-[150px]">Thời Gian</th>
-                             <th className="px-4 py-3">Nội dung</th>
-                             <th className="px-4 py-3">Kết quả</th>
-                             <th className="px-4 py-3 text-center w-[100px]">Nguồn</th>
-                          </tr>
-                       </thead>
-                       <tbody className="divide-y divide-gray-100">
-                          {logs.map(log => (
-                             <tr key={log.id} className="hover:bg-gray-50">
-                                <td className="px-4 py-3 text-gray-500 text-xs">
-                                   {new Date(log.timestamp).toLocaleString('vi-VN')}
-                                </td>
-                                <td className="px-4 py-3 font-medium text-gray-800">
-                                   {log.query}
-                                </td>
-                                <td className="px-4 py-3">
-                                   {log.isSuccess ? (
-                                      <span className="text-green-700 font-bold flex items-center gap-1">
-                                        ✓ {log.resultBranch}
-                                      </span>
-                                   ) : (
-                                      <span className="text-red-500 text-xs">{log.resultBranch || 'Lỗi không xác định'}</span>
-                                   )}
-                                </td>
-                                <td className="px-4 py-3 text-center">
-                                   <span className={`text-[10px] font-bold px-2 py-1 rounded border ${log.source === 'AI' ? 'bg-blue-50 text-blue-600 border-blue-200' : log.source === 'FAIL' ? 'bg-red-50 text-red-600 border-red-200' : 'bg-green-50 text-green-600 border-green-200'}`}>
-                                      {log.source}
-                                   </span>
-                                </td>
-                             </tr>
-                          ))}
-                          {logs.length === 0 && (
-                             <tr>
-                                <td colSpan={4} className="text-center py-8 text-gray-400 italic">Chưa có lịch sử tìm kiếm nào được ghi nhận.</td>
-                             </tr>
-                          )}
-                       </tbody>
-                    </table>
-                 </div>
-              </div>
-           </div>
+                {/* LIST COLUMN:
+                    - Mobile: Show only if activeTab is 'list'
+                    - Desktop: Always show (Split view)
+                */}
+                <div className={`
+                    flex-col h-full overflow-hidden order-1 md:order-2 bg-gray-50 relative
+                    md:flex-1
+                    ${activeTab === 'list' ? 'flex flex-1' : 'hidden md:flex'}
+                `}>
+                  <div className="p-3 md:p-4 bg-white border-b border-gray-200 flex gap-2 flex-shrink-0 sticky top-0 z-10 shadow-sm">
+                     <input type="text" placeholder="Tìm kiếm nhanh..." value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} className="flex-1 px-4 py-3 md:py-2.5 border rounded-lg focus:outline-none focus:border-[#8B1E1E] bg-gray-50 text-base shadow-inner" />
+                     <div className="bg-[#8B1E1E] text-white px-4 py-2 rounded-lg font-bold text-sm flex items-center shadow">{filteredBranches.length}</div>
+                  </div>
+
+                  <div className="flex-1 overflow-y-auto custom-scrollbar p-3 md:p-6 pb-20 md:pb-6">
+                     <div className="grid grid-cols-1 xl:grid-cols-2 gap-3 md:gap-4">
+                       {filteredBranches.map(branch => {
+                         const isHidden = branch.isActive === false;
+                         let statusBadge = <span className="bg-green-100 text-green-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Hoạt động</span>;
+                         
+                         if (isHidden) {
+                            statusBadge = <span className="bg-gray-200 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Đã Ẩn</span>;
+                         } else if (branch.holidaySchedule?.isEnabled) {
+                            const start = new Date(branch.holidaySchedule.startTime);
+                            const end = new Date(branch.holidaySchedule.endTime);
+                            if (now >= start && now <= end) {
+                               statusBadge = <span className="bg-red-100 text-red-600 px-2 py-0.5 rounded text-[10px] font-bold uppercase animate-pulse">Đang Nghỉ</span>;
+                            } else if (now < start) {
+                               statusBadge = <span className="bg-yellow-100 text-yellow-700 px-2 py-0.5 rounded text-[10px] font-bold uppercase">Sắp Nghỉ</span>;
+                            }
+                         }
+
+                         return (
+                           <div key={branch.id} className={`bg-white p-4 md:p-5 rounded-xl shadow-sm border border-gray-100 hover:shadow-md transition-all cursor-pointer ${editingId === branch.id ? 'ring-2 ring-[#D4AF37] bg-amber-50' : ''} ${isHidden ? 'opacity-60' : ''}`} onClick={(e) => prepareForm(branch)}>
+                             <div className="flex justify-between items-start mb-2">
+                                <h4 className="font-bold text-[#8B1E1E] text-base md:text-lg">{branch.name}</h4>
+                                {statusBadge}
+                             </div>
+                             <p className="text-gray-600 text-sm mb-3 leading-snug font-medium line-clamp-2">{branch.address}</p>
+                             <div className="flex justify-between items-end border-t border-gray-100 pt-3">
+                                <div className="text-xs text-gray-500 font-medium flex flex-col gap-1">
+                                   <span>QL: <span className="text-gray-800">{branch.manager}</span></span>
+                                   {branch.phoneNumber && <span>SĐT: <span className="text-gray-800">{branch.phoneNumber}</span></span>}
+                                </div>
+                                <div className="flex gap-2">
+                                   <button onClick={(e) => { e.stopPropagation(); prepareForm(branch); }} className="text-blue-600 bg-blue-50 hover:bg-blue-100 font-bold text-xs uppercase px-3 py-1.5 rounded transition-colors">Sửa</button>
+                                   <button onClick={(e) => handleDelete(e, branch.id)} className="text-red-600 bg-red-50 hover:bg-red-100 font-bold text-xs uppercase px-3 py-1.5 rounded transition-colors">Xóa</button>
+                                </div>
+                             </div>
+                           </div>
+                         )
+                       })}
+                     </div>
+                  </div>
+                </div>
+            </>
         )}
       </div>
+
+      {/* --- MOBILE BOTTOM NAVIGATION --- */}
+      <div className="md:hidden fixed bottom-0 left-0 right-0 bg-white border-t border-gray-200 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.05)] z-50 flex justify-around pb-safe">
+          <button 
+             onClick={() => setActiveTab('list')}
+             className={`flex flex-col items-center justify-center py-2 flex-1 transition-colors ${activeTab === 'list' ? 'text-[#8B1E1E]' : 'text-gray-400'}`}
+          >
+             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mb-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+               <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+             </svg>
+             <span className="text-[10px] font-bold uppercase">Danh sách</span>
+          </button>
+
+          <button 
+             onClick={() => prepareForm()}
+             className={`flex flex-col items-center justify-center py-2 flex-1 transition-colors ${activeTab === 'form' ? 'text-[#8B1E1E]' : 'text-gray-400'}`}
+          >
+             {editingId ? (
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mb-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+                </svg>
+             ) : (
+                <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mb-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
+                </svg>
+             )}
+             <span className="text-[10px] font-bold uppercase">{editingId ? 'Sửa Chi Tiết' : 'Thêm Mới'}</span>
+          </button>
+
+          <button 
+             onClick={() => setActiveTab('logs')}
+             className={`flex flex-col items-center justify-center py-2 flex-1 transition-colors ${activeTab === 'logs' ? 'text-[#8B1E1E]' : 'text-gray-400'}`}
+          >
+             <svg xmlns="http://www.w3.org/2000/svg" className="h-6 w-6 mb-0.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+               <path strokeLinecap="round" strokeLinejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+             </svg>
+             <span className="text-[10px] font-bold uppercase">Nhật Ký</span>
+          </button>
+      </div>
+
     </div>
   );
 };
